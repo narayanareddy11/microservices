@@ -1,0 +1,60 @@
+# You can override the included template(s) by including variable overrides
+# SAST customization: https://docs.gitlab.com/ee/user/application_security/sast/#customizing-the-sast-settings
+# Secret Detection customization: https://docs.gitlab.com/ee/user/application_security/secret_detection/#customizing-settings
+# Dependency Scanning customization: https://docs.gitlab.com/ee/user/application_security/dependency_scanning/#customizing-the-dependency-scanning-settings
+# Container Scanning customization: https://docs.gitlab.com/ee/user/application_security/container_scanning/#customizing-the-container-scanning-settings
+# Note that environment variables can be set in several places
+# See https://docs.gitlab.com/ee/ci/variables/#cicd-variable-precedence
+stages:
+- sonarcloud-check
+- clean
+- kubescore
+- deploy
+- test
+variables:
+  SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"
+  GIT_DEPTH: '0'
+sonarcloud-check:
+  stage: sonarcloud-check
+  image:
+    name: sonarsource/sonar-scanner-cli:latest
+    entrypoint:
+    - ''
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+    - ".sonar/cache"
+  script:
+  - sonar-scanner
+kubescore:
+  stage: kubescore
+  script:
+  - kube-score score k8s-specifications/*   || true
+  tags:
+  - ubuntu-pc
+clean:
+  stage: clean
+  script:
+  - deployment_name=$(kubectl get deployment -l app=vote -n vote-micro -o name)
+  - if [ -n "$deployment_name" ]; then kubectl delete -f k8s-specifications/; else
+    echo "No deployment found"; fi
+  tags:
+  - ubuntu-pc
+deploy:
+  stage: deploy
+  script:
+  - echo $USER
+  - kubectl apply -f k8s-specifications/ --dry-run=client -o yaml | kubectl apply
+    -f -
+  - status=$?
+  - if [ $status -eq 0 ]; then echo "Deployment succeeded"; else echo "Deployment
+    already exists or failed to apply"; fi
+  - kubectl get all -n vote-micro
+  - minikube service vote -n vote-micro --url || true
+  - minikube service result -n vote-micro --url  || true
+  tags:
+  - ubuntu-pc
+sast:
+  stage: test
+include:
+- template: Security/SAST.gitlab-ci.yml
